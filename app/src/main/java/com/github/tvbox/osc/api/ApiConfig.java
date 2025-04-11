@@ -326,6 +326,7 @@ public class ApiConfig {
             }
         }else {
             if (Boolean.parseBoolean(jarCache) && cache.exists() && !FileUtils.isWeekAgo(cache)) {
+                LOG.i("echo-load jar jarCache:"+jarUrl);
                 if (jarLoader.load(cache.getAbsolutePath())) {
                     callback.success();
                     return;
@@ -527,15 +528,16 @@ public class ApiConfig {
                 JsonObject livesOBJ = lives_groups.get(live_group_index).getAsJsonObject();
                 loadLiveApi(livesOBJ);
             }
-            myHosts = new HashMap<>();
-            if (infoJson.has("hosts")) {
-                JsonArray hostsArray = infoJson.getAsJsonArray("hosts");
-                for (int i = 0; i < hostsArray.size(); i++) {
-                    String entry = hostsArray.get(i).getAsString();
-                    String[] parts = entry.split("=", 2); // 只分割一次，防止 value 里有 =
-                    if (parts.length == 2) {
-                        myHosts.put(parts[0], parts[1]);
-                    }
+        }
+
+        myHosts = new HashMap<>();
+        if (infoJson.has("hosts")) {
+            JsonArray hostsArray = infoJson.getAsJsonArray("hosts");
+            for (int i = 0; i < hostsArray.size(); i++) {
+                String entry = hostsArray.get(i).getAsString();
+                String[] parts = entry.split("=", 2); // 只分割一次，防止 value 里有 =
+                if (parts.length == 2) {
+                    myHosts.put(parts[0], parts[1]);
                 }
             }
         }
