@@ -36,7 +36,6 @@ import com.github.tvbox.osc.ui.dialog.BackupDialog;
 import com.github.tvbox.osc.ui.dialog.DanmuApiDialog;
 import com.github.tvbox.osc.ui.dialog.SearchRemoteTvDialog;
 import com.github.tvbox.osc.ui.dialog.SelectDialog;
-import com.github.tvbox.osc.ui.dialog.XWalkInitDialog;
 import com.github.tvbox.osc.util.DanmuHelper;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.FileUtils;
@@ -152,7 +151,8 @@ public class ModelSettingFragment extends BaseLazyFragment {
         tvIjkCachePlay = findViewById(R.id.tvIjkCachePlay);
         tvMediaCodec.setText(Hawk.get(HawkConfig.IJK_CODEC, "硬解码"));
         tvDebugOpen.setText(Hawk.get(HawkConfig.DEBUG_OPEN, false) ? "已打开" : "已关闭");
-        tvParseWebView.setText(Hawk.get(HawkConfig.PARSE_WEBVIEW, true) ? "系统自带" : "XWalkView");
+        Hawk.put(HawkConfig.PARSE_WEBVIEW, true);
+        tvParseWebView.setText("系统自带");
         tvApi.setText(Hawk.get(HawkConfig.API_URL, ""));
         refreshApiLineText();
 
@@ -176,23 +176,13 @@ public class ModelSettingFragment extends BaseLazyFragment {
                 tvDebugOpen.setText(Hawk.get(HawkConfig.DEBUG_OPEN, false) ? "已打开" : "已关闭");
             }
         });
-        findViewById(R.id.llParseWebVew).setOnClickListener(new View.OnClickListener() {
+        LinearLayout llParseWebVew = findViewById(R.id.llParseWebVew);
+        llParseWebVew.setAlpha(0.4f);
+        llParseWebVew.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 FastClickCheckUtil.check(v);
-                boolean useSystem = !Hawk.get(HawkConfig.PARSE_WEBVIEW, true);
-                Hawk.put(HawkConfig.PARSE_WEBVIEW, useSystem);
-                tvParseWebView.setText(Hawk.get(HawkConfig.PARSE_WEBVIEW, true) ? "系统自带" : "XWalkView");
-                if (!useSystem) {
-                    Toast.makeText(mContext, "注意: XWalkView只适用于部分低Android版本，Android5.0以上推荐使用系统自带", Toast.LENGTH_LONG).show();
-                    XWalkInitDialog dialog = new XWalkInitDialog(mContext);
-                    dialog.setOnListener(new XWalkInitDialog.OnListener() {
-                        @Override
-                        public void onchange() {
-                        }
-                    });
-                    dialog.show();
-                }
+                Toast.makeText(mContext, "XWalkView 已停用，请使用系统自带", Toast.LENGTH_LONG).show();
             }
         });
         findViewById(R.id.llBackup).setOnClickListener(new View.OnClickListener() {

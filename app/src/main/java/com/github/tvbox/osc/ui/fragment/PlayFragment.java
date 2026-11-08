@@ -2615,7 +2615,7 @@ public class PlayFragment extends BaseLazyFragment {
 
     void loadWebView(String url) {
         if (mSysWebView == null && mXwalkWebView == null) {
-            boolean useSystemWebView = Hawk.get(HawkConfig.PARSE_WEBVIEW, true);
+            boolean useSystemWebView = true; // XWalk已停用，强制使用系统WebView
             if (!useSystemWebView) {
                 XWalkUtils.tryUseXWalk(mContext, new XWalkUtils.XWalkState() {
                     @Override
@@ -2792,9 +2792,9 @@ public class PlayFragment extends BaseLazyFragment {
         final WebSettings settings = webView.getSettings();
         settings.setNeedInitialFocus(false);
         settings.setAllowContentAccess(true);
-        settings.setAllowFileAccess(true);
-        settings.setAllowUniversalAccessFromFileURLs(true);
-        settings.setAllowFileAccessFromFileURLs(true);
+        settings.setAllowFileAccess(false);
+        settings.setAllowUniversalAccessFromFileURLs(false);
+        settings.setAllowFileAccessFromFileURLs(false);
         settings.setDatabaseEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setJavaScriptEnabled(true);
@@ -2815,7 +2815,7 @@ public class PlayFragment extends BaseLazyFragment {
         settings.setBuiltInZoomControls(true);
         settings.setSupportZoom(false);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         }
 //        settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
@@ -2856,7 +2856,7 @@ public class PlayFragment extends BaseLazyFragment {
         @SuppressLint("WebViewClientOnReceivedSslError")
         @Override
         public void onReceivedSslError(WebView webView, SslErrorHandler sslErrorHandler, SslError sslError) {
-            sslErrorHandler.proceed();
+            sslErrorHandler.cancel();
         }
 
         @Override
