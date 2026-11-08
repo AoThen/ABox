@@ -33,7 +33,7 @@ public abstract class BaseController extends BaseVideoController implements Gest
     private boolean mIsGestureEnabled = true;
     private int mStreamVolume;
     private float mBrightness;
-    private int mSeekPosition;
+    private int mSeekPosition = -1;
     private boolean mFirstTouch;
     private boolean mChangePosition;
     private boolean mChangeBrightness;
@@ -181,6 +181,12 @@ public abstract class BaseController extends BaseVideoController implements Gest
         }
     }
 
+    public void showPauseRoot() {
+        if (mPauseRoot != null) {
+            mPauseRoot.setVisibility(VISIBLE);
+        }
+    }
+
     @Override
     public void setPlayerState(int playerState) {
         super.setPlayerState(playerState);
@@ -205,6 +211,14 @@ public abstract class BaseController extends BaseVideoController implements Gest
                 && mCurPlayState != VideoView.STATE_PREPARED
                 && mCurPlayState != VideoView.STATE_START_ABORT
                 && mCurPlayState != VideoView.STATE_PLAYBACK_COMPLETED;
+    }
+
+    protected boolean canHandleGesture(MotionEvent event) {
+        return isInPlaybackState()
+                && mIsGestureEnabled
+                && mCanSlide
+                && !isLocked()
+                && !PlayerUtils.isEdge(getContext(), event);
     }
 
     @Override
@@ -260,12 +274,7 @@ public abstract class BaseController extends BaseVideoController implements Gest
      */
     @Override
     public boolean onScroll(MotionEvent e1, MotionEvent e2, float distanceX, float distanceY) {
-        if (!isInPlaybackState() //不处于播放状态
-                || !mIsGestureEnabled //关闭了手势
-                || !mCanSlide //关闭了滑动手势
-                || isLocked() //锁住了屏幕
-                || PlayerUtils.isEdge(getContext(), e1)) //处于屏幕边沿
-            return true;
+        if (!canHandleGesture(e1)) return true;
         float deltaX = e1.getX() - e2.getX();
         float deltaY = e1.getY() - e2.getY();
         if (mFirstTouch) {
@@ -387,14 +396,14 @@ public abstract class BaseController extends BaseVideoController implements Gest
             switch (action) {
                 case MotionEvent.ACTION_UP:
                     stopSlide();
-                    if (mSeekPosition > 0) {
+                    if (mSeekPosition >= 0) {
                         mControlWrapper.seekTo(mSeekPosition);
-                        mSeekPosition = 0;
+                        mSeekPosition = -1;
                     }
                     break;
                 case MotionEvent.ACTION_CANCEL:
                     stopSlide();
-                    mSeekPosition = 0;
+                    mSeekPosition = -1;
                     break;
             }
         }

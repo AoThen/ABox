@@ -17,6 +17,7 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
     <application
         android:name=".base.App"
@@ -73,12 +74,31 @@
         <activity
             android:name=".ui.activity.LocalFileActivity"
             android:screenOrientation="sensorLandscape" />
+        <activity
+            android:name=".ui.activity.TransferActivity"
+            android:screenOrientation="sensorLandscape" />
+
+        <service
+            android:name=".dlna.DLNACastService"
+            android:exported="false" />
+
+        <service
+            android:name=".player.MusicPlaybackService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
 
         <receiver
             android:name=".receiver.SearchReceiver"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.content.movie.search.Action" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".receiver.PushReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.content.movie.push.Action" />
             </intent-filter>
         </receiver>
         <receiver

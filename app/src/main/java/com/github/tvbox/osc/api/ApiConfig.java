@@ -9,6 +9,7 @@ import android.os.Looper;
 import android.text.TextUtils;
 import android.util.Base64;
 
+import com.google.android.exoplayer2.util.UriUtil;
 import com.github.catvod.crawler.JarLoader;
 import com.github.catvod.crawler.JsLoader;
 import com.github.catvod.crawler.pyLoader;
@@ -751,6 +752,10 @@ public class ApiConfig {
         SourceBean firstSite = null;
         for (JsonElement opt : infoJson.get("sites").getAsJsonArray()) {
             JsonObject obj = (JsonObject) opt;
+            if (!obj.has("key") || !obj.has("type") || !obj.has("api")) {
+                LOG.i("echo-skip incomplete site config: " + obj);
+                continue;
+            }
             SourceBean sb = new SourceBean();
             String siteKey = obj.get("key").getAsString().trim();
             sb.setKey(siteKey);
@@ -759,6 +764,7 @@ public class ApiConfig {
             sb.setApi(obj.get("api").getAsString().trim());
             sb.setSearchable(DefaultConfig.safeJsonInt(obj, "searchable", 1));
             sb.setQuickSearch(DefaultConfig.safeJsonInt(obj, "quickSearch", 1));
+            sb.setChangeable(DefaultConfig.safeJsonInt(obj, "changeable", 1));
             if(siteKey.startsWith("py_")){
                 sb.setFilterable(1);
             }else {
@@ -1036,7 +1042,7 @@ public class ApiConfig {
         initLiveSettings();
         Hawk.put(HawkConfig.LIVE_GROUP_LIST, new JsonArray());
         Hawk.put(HawkConfig.EPG_URL, extractLiveTextEpg(content));
-        Hawk.put(HawkConfig.LIVE_PLAY_TYPE, Hawk.get(HawkConfig.PLAY_TYPE, 0));
+        Hawk.put(HawkConfig.LIVE_PLAY_TYPE, Hawk.get(HawkConfig.PLAY_TYPE, 2));
         Hawk.put(HawkConfig.LIVE_WEB_HEADER, null);
         JsonArray livesArray = TxtSubscribe.parseToJsonArray(content);
         loadLives(livesArray);
@@ -1124,9 +1130,9 @@ public class ApiConfig {
         ArrayList<ArrayList<String>> itemsArrayList = new ArrayList<>();
         ArrayList<String> sourceItems = new ArrayList<>();
         ArrayList<String> scaleItems = new ArrayList<>(Arrays.asList("默认", "16:9", "4:3", "填充", "原始", "裁剪"));
-        ArrayList<String> playerDecoderItems = new ArrayList<>(Arrays.asList("系统", "ijk硬解", "ijk软解", "exo"));
+        ArrayList<String> playerDecoderItems = new ArrayList<>(Arrays.asList("ijk硬解", "ijk软解", "exo"));
         ArrayList<String> timeoutItems = new ArrayList<>(Arrays.asList("5s", "10s", "15s", "20s", "25s", "30s"));
-        ArrayList<String> personalSettingItems = new ArrayList<>(Arrays.asList("显示时间", "显示网速", "显分辨率", "换台反转", "跨选分类"));
+        ArrayList<String> personalSettingItems = new ArrayList<>(Arrays.asList("显示时间", "显示网速", "换台反转", "跨选分类"));
         ArrayList<String> yumItems = new ArrayList<>();
         ArrayList<String> liveApiHistoryItems = new ArrayList<>();
 
@@ -1392,7 +1398,7 @@ public class ApiConfig {
                 String livePlayType =livesOBJ.get("playerType").getAsString();
                 Hawk.put(HawkConfig.LIVE_PLAY_TYPE,livePlayType);
             }else {
-                Hawk.put(HawkConfig.LIVE_PLAY_TYPE,Hawk.get(HawkConfig.PLAY_TYPE, 0));
+                Hawk.put(HawkConfig.LIVE_PLAY_TYPE,Hawk.get(HawkConfig.PLAY_TYPE, 2));
             }
             //设置UA
             if(livesOBJ.has("timeout")){
@@ -1465,6 +1471,14 @@ public class ApiConfig {
 
     public void warmSearchSpiders() {
         final ArrayList<SourceBean> sources = new ArrayList<>(sourceBeanList.values());
+        final SourceBean home = getHomeSourceBean();
+        final Set<String> sharedSpiderApis = new HashSet<>();
+        Set<String> spiderApis = new HashSet<>();
+        for (SourceBean source : sources) {
+            if (source == null || source.getType() != 3) continue;
+            String spiderApiKey = source.getJar() + "|" + source.getApi();
+            if (!spiderApis.add(spiderApiKey)) sharedSpiderApis.add(spiderApiKey);
+        }
         configLoadExecutor.execute(new Runnable() {
             @Override
             public void run() {
@@ -1472,7 +1486,10 @@ public class ApiConfig {
                 int eligibleCount = 0;
                 for (SourceBean source : sources) {
                     if (source == null || source.getType() != 3 || !source.isSearchable()) continue;
-                    if (eligibleCount >= 20) break;
+                    if (home != null && TextUtils.equals(home.getKey(), source.getKey())) continue;
+                    // 同类 Spider 可能通过静态状态保存 ext，不能在后台预热时交替初始化。
+                    if (sharedSpiderApis.contains(source.getJar() + "|" + source.getApi())) continue;
+                    if (eligibleCount >= 10) break;
                     eligibleCount++;
                     String warmKey = source.getKey() + "|" + source.getApi() + "|" + source.getJar() + "|" + source.getExt();
                     synchronized (warmedSearchSpiderKeys) {
@@ -1480,7 +1497,7 @@ public class ApiConfig {
                         warmedSearchSpiderKeys.add(warmKey);
                     }
                     try {
-                        LOG.i("echo-warm-spider load:" + warmKey);
+//                        LOG.i("echo-warm-spider load:" + warmKey);
                         getCSP(source);
                     } catch (Throwable th) {
                         LOG.e("echo-warm-search-spider-error " + source.getKey() + ":" + th.getMessage());
@@ -1665,8 +1682,16 @@ public class ApiConfig {
     }
 
     public SourceBean getSource(String key) {
-        if (!sourceBeanList.containsKey(key))
+        if (!sourceBeanList.containsKey(key)) {
+            if ("push_agent".equals(key)) {
+                SourceBean sourceBean = new SourceBean();
+                sourceBean.setKey("push_agent");
+                sourceBean.setName("推送");
+                sourceBean.setType(-1);
+                return sourceBean;
+            }
             return null;
+        }
         return sourceBeanList.get(key);
     }
 
@@ -1767,12 +1792,8 @@ public class ApiConfig {
                 url = "http://" + url;
             }
             if(url.startsWith("clan://"))url=clanToAddress(url);
-            String base = url.substring(0,url.lastIndexOf("/") + 1);
-            String parent = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
-            int parentEnd = parent.lastIndexOf("/");
-            if (parentEnd >= 0) parent = parent.substring(0, parentEnd + 1);
-            content = content.replace("../", parent);
-            content = content.replace("./", base);
+            content = content.replace("../", UriUtil.resolve(url, "../"));
+            content = content.replace("./", UriUtil.resolve(url, "./"));
         }
         return content;
     }

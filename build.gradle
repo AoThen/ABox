@@ -8,6 +8,10 @@ buildscript {
         maven { url "https://maven.aliyun.com/repository/public" }
         maven { url "https://maven.aliyun.com/repository/releases" }
         maven { url "https://storage.googleapis.com/r8-releases/raw" }
+        maven {
+            url "http://4thline.org/m2"
+            allowInsecureProtocol = true
+        }
         maven { url "https://chaquo.com/maven" }
     }
     dependencies {
@@ -23,6 +27,10 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        maven {
+            url "http://4thline.org/m2"
+            allowInsecureProtocol = true
+        }
         maven { url "https://jitpack.io" }
         maven { url "https://maven.aliyun.com/repository/public" }
         maven { url "https://maven.aliyun.com/repository/releases" }

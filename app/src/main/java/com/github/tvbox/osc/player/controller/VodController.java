@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
+import android.content.res.Configuration;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.ColorFilter;
@@ -17,6 +18,7 @@ import android.os.Message;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.webkit.WebView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -37,10 +39,12 @@ import com.github.tvbox.osc.bean.SourceBean;
 import com.github.tvbox.osc.server.ControlManager;
 import com.github.tvbox.osc.server.RemoteServer;
 import com.github.tvbox.osc.subtitle.widget.SimpleSubtitleView;
+import com.google.android.exoplayer2.ui.SubtitleView;
 import com.github.tvbox.osc.ui.adapter.ParseAdapter;
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter;
 import com.github.tvbox.osc.ui.dialog.SelectDialog;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
+import com.github.tvbox.osc.util.DanmuHelper;
 import com.github.tvbox.osc.util.HawkConfig;
 import com.github.tvbox.osc.util.LOG;
 import com.github.tvbox.osc.util.M3u8;
@@ -75,14 +79,24 @@ import java.util.List;
 
 import java.util.Date;
 import java.util.Map;
+import java.util.Locale;
 
 import xyz.doikki.videoplayer.player.VideoView;
 
 import static xyz.doikki.videoplayer.util.PlayerUtils.stringForTime;
-import static xyz.doikki.videoplayer.util.PlayerUtils.seconds2Time;
 import static xyz.doikki.videoplayer.util.PlayerUtils.safeTimeMs;
 
 public class VodController extends BaseController {
+    private static final float PORTRAIT_EPISODE_SWIPE_DP = 80f;
+    private static final long PORTRAIT_EPISODE_TITLE_SHOW_MS = 3000L;
+    private boolean portraitEpisodeSwipeTriggered;
+    private final Runnable portraitEpisodeTitleRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!isBottomVisible()) mTopRoot1.setVisibility(GONE);
+        }
+    };
+
     public VodController(@NonNull @NotNull Context context) {
         super(context);
         mHandlerCallback = new HandlerCallback() {
@@ -99,6 +113,8 @@ public class VodController extends BaseController {
                     }
                     case 1002: { // 显示底部菜单
                         updateDanmuSearchUiBtn();
+                        hidePauseRoot();
+                        mPlayTitle.setVisibility(GONE);
                         mBottomRoot.setVisibility(VISIBLE);
                         mTopRoot1.setVisibility(VISIBLE);
                         mTopRoot2.setVisibility(VISIBLE);
@@ -108,8 +124,8 @@ public class VodController extends BaseController {
                         }else {
                             net_play_speed.setVisibility(GONE);
                         }
-                        mPlayTitle.setVisibility(GONE);
-                        backBtn.setVisibility(ScreenUtils.isTv(context) ? INVISIBLE : VISIBLE);
+                        boolean isPortrait = getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT;
+                        backBtn.setVisibility(ScreenUtils.isTv(context) || isPortrait ? INVISIBLE : VISIBLE);
                         showLockView();
                         break;
                     }
@@ -117,6 +133,13 @@ public class VodController extends BaseController {
                         mBottomRoot.setVisibility(GONE);
                         mTopRoot1.setVisibility(GONE);
                         mPlayLoadNetSpeedRightTop.setVisibility(GONE);
+                        if (videoPlayState == VideoView.STATE_PAUSED) {
+                            showPauseRoot();
+                            mPlayTitle.setVisibility(VISIBLE);
+                        } else {
+                            hidePauseRoot();
+                            mPlayTitle.setVisibility(GONE);
+                        }
                         if(Hawk.get(HawkConfig.SCREEN_DISPLAY,GONE)==GONE){
                             mPlayPauseTime.setVisibility(GONE);
                         }else {
@@ -146,6 +169,45 @@ public class VodController extends BaseController {
         };
     }
 
+    @Override
+    public boolean onDown(MotionEvent e) {
+        portraitEpisodeSwipeTriggered = false;
+        return super.onDown(e);
+    }
+
+    @Override
+    public boolean onScroll(MotionEvent e1, MotionEvent e2, float distanceX, float distanceY) {
+        if (isPortraitEpisodeSwipe(e1, e2)) {
+            if (!portraitEpisodeSwipeTriggered && Math.abs(e2.getY() - e1.getY()) >= portraitEpisodeSwipeThreshold()) {
+                portraitEpisodeSwipeTriggered = true;
+                if (listener != null) {
+                    if (e2.getY() < e1.getY()) listener.playNext(false);
+                    else listener.playPre();
+                    showPortraitEpisodeTitle();
+                }
+            }
+            return true;
+        }
+        return super.onScroll(e1, e2, distanceX, distanceY);
+    }
+
+    private boolean isPortraitEpisodeSwipe(MotionEvent e1, MotionEvent e2) {
+        if (e1 == null || e2 == null || !canHandleGesture(e1)) return false;
+        if (getResources().getConfiguration().orientation != Configuration.ORIENTATION_PORTRAIT) return false;
+        return Math.abs(e2.getY() - e1.getY()) > Math.abs(e2.getX() - e1.getX());
+    }
+
+    private float portraitEpisodeSwipeThreshold() {
+        return getResources().getDisplayMetrics().density * PORTRAIT_EPISODE_SWIPE_DP;
+    }
+
+    private void showPortraitEpisodeTitle() {
+        if (isBottomVisible()) return;
+        mHandler.removeCallbacks(portraitEpisodeTitleRunnable);
+        mTopRoot1.setVisibility(VISIBLE);
+        mHandler.postDelayed(portraitEpisodeTitleRunnable, PORTRAIT_EPISODE_TITLE_SHOW_MS);
+    }
+
     SeekBar mSeekBar;
     TextView mCurrentTime;
     TextView mTotalTime;
@@ -163,6 +225,7 @@ public class VodController extends BaseController {
     TvRecyclerView mGridParseView;
     TextView mPlayTitle;
     TextView mPlayTitle1;
+    TextView mPlayLabel;
     TextView mPlayLoadNetSpeedRightTop;
     TextView mNextBtn;
     TextView mPreBtn;
@@ -180,8 +243,11 @@ public class VodController extends BaseController {
     TextView mPlayLoadNetSpeed;
     TextView mVideoSize;
     public SimpleSubtitleView mSubtitleView;
+    public SimpleSubtitleView mLyricView;
+    public SubtitleView mExoSubtitleView;
     TextView mZimuBtn;
     TextView mAudioTrackBtn;
+    TextView mVideoTrackBtn;
     TextView mDanmuSettingBtn;
     TextView mDanmuSearchUiBtn;
     public TextView mLandscapePortraitBtn;
@@ -190,8 +256,10 @@ public class VodController extends BaseController {
     TextView seekTime; //右上角进度时间显示
     TextView mScreenDisplay; //增加屏显开关
     LinearLayout tv_screen_display; //增加屏显布局
+    TextView mCastBtn;
     TextView net_play_speed;
     private boolean hasDanmu = false;
+    private boolean showParse;
 
     LockRunnable lockRunnable = new LockRunnable();
     private boolean isLock = false;
@@ -207,7 +275,7 @@ public class VodController extends BaseController {
         @Override
         public void run() {
             Date date = new Date();
-            @SuppressLint("SimpleDateFormat") SimpleDateFormat timeFormat = new SimpleDateFormat("hh:mm a");
+            @SuppressLint("SimpleDateFormat") SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm");
             mPlayPauseTime.setText(timeFormat.format(date));
             long mSpeed = mControlWrapper.getTcpSpeed();
             String speed = PlayerHelper.getDisplaySpeed(mSpeed,false);
@@ -218,14 +286,15 @@ public class VodController extends BaseController {
             int[] mVideoSizes = mControlWrapper.getVideoSize();
             String width = Integer.toString(mVideoSizes[0]);
             String height = Integer.toString(mVideoSizes[1]);
-            mVideoSize.setText("[ " + width + " X " + height +" ]");
+            mVideoSize.setText(width + " X " + height);
 
             mHandler.postDelayed(this, 1000);
         }
     };
     
     private void showLockView() {
-        if (previewMode) {
+        if (previewMode || getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT) {
+            if (getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT) isLock = false;
             mHandler.removeCallbacks(lockRunnable);
             if (mLockView != null) {
                 mLockView.setVisibility(INVISIBLE);
@@ -254,6 +323,7 @@ public class VodController extends BaseController {
         mTotalTime = findViewById(R.id.total_time);
         mPlayTitle = findViewById(R.id.tv_info_name);
         mPlayTitle1 = findViewById(R.id.tv_info_name1);
+        mPlayLabel = findViewById(R.id.play_label);
         mPlayLoadNetSpeedRightTop = findViewById(R.id.tv_play_load_net_speed_right_top);
         mSeekBar = findViewById(R.id.seekBar);
         CircleThumbDrawable seekThumb = new CircleThumbDrawable(getContext());
@@ -286,18 +356,28 @@ public class VodController extends BaseController {
         mPlayLoadNetSpeed = findViewById(R.id.tv_play_load_net_speed);
         mVideoSize = findViewById(R.id.tv_videosize);
         mSubtitleView = findViewById(R.id.subtitle_view);
+        mLyricView = findViewById(R.id.lyric_view);
+        mExoSubtitleView = findViewById(R.id.exo_subtitle_view);
         mZimuBtn = findViewById(R.id.zimu_select);
         mAudioTrackBtn = findViewById(R.id.audio_track_select);
+        mVideoTrackBtn = findViewById(R.id.video_track_select);
         mDanmuSettingBtn = findViewById(R.id.danmu_setting);
         mDanmuSearchUiBtn = findViewById(R.id.danmu_search_ui);
-        updateDanmuSearchUiBtn();
         mLandscapePortraitBtn = findViewById(R.id.landscape_portrait);
         backBtn = findViewById(R.id.tv_back);
         seekTime = findViewById(R.id.tv_seek_time);
         mScreenDisplay = findViewById(R.id.screen_display);
+        mCastBtn = findViewById(R.id.play_cast);
+        updateDanmuBtn();
+        updateDanmuSearchUiBtn();
         backBtn.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View v) {
+                if (getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT) {
+                    setLandscapePortrait();
+                    hideBottom();
+                    return;
+                }
                 if (getContext() instanceof Activity) {
                     isClickBackBtn = true;
                     ((Activity) getContext()).onBackPressed();
@@ -417,6 +497,8 @@ public class VodController extends BaseController {
             @Override
             public void onFocusChange(View v, boolean hasFocus) {
                 if (hasFocus) {
+                    boolean hasParse = mParseRoot.getVisibility() == VISIBLE && mGridParseView.getAdapter() != null && mGridParseView.getAdapter().getItemCount() > 0;
+                    mSeekBar.setNextFocusUpId(hasParse ? R.id.mGridParseView : R.id.play_next);
                     keepSeekBarActive();
                     v.setSelected(true);
                     v.refreshDrawableState();
@@ -502,6 +584,15 @@ public class VodController extends BaseController {
                 hideBottom();
             }
         });
+        setOnTvLongClickListener(mNextBtn, new OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View view) {
+                FastClickCheckUtil.check(view);
+                listener.showEpisodeDialog();
+                hideBottom();
+                return true;
+            }
+        });
         mPreBtn.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -509,23 +600,38 @@ public class VodController extends BaseController {
                 hideBottom();
             }
         });
+        setOnTvLongClickListener(mPreBtn, new OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View view) {
+                FastClickCheckUtil.check(view);
+                listener.showEpisodeDialog();
+                hideBottom();
+                return true;
+            }
+        });
         mPlayerScaleBtn.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View view) {
                 myHandle.removeCallbacks(myRunnable);
                 myHandle.postDelayed(myRunnable, myHandleSeconds);
+                showScaleDialog();
+            }
+        });
+        setOnTvLongClickListener(mPlayerScaleBtn, new OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View view) {
+                myHandle.removeCallbacks(myRunnable);
+                myHandle.postDelayed(myRunnable, myHandleSeconds);
+                FastClickCheckUtil.check(view);
                 try {
-                    int scaleType = mPlayerConfig.getInt("sc");
-                    scaleType++;
-                    if (scaleType > 5)
-                        scaleType = 0;
-                    mPlayerConfig.put("sc", scaleType);
+                    mPlayerConfig.put("sc", 0);
                     updatePlayerCfgView();
                     listener.updatePlayerCfg();
-                    mControlWrapper.setScreenScaleType(scaleType);
+                    mControlWrapper.setScreenScaleType(0);
                 } catch (JSONException e) {
                     e.printStackTrace();
                 }
+                return true;
             }
         });
         mPlayerSpeedBtn.setOnClickListener(new OnClickListener() {
@@ -533,25 +639,16 @@ public class VodController extends BaseController {
             public void onClick(View view) {
                 myHandle.removeCallbacks(myRunnable);
                 myHandle.postDelayed(myRunnable, myHandleSeconds);
-                try {
-                    float speed = (float) mPlayerConfig.getDouble("sp");
-                    speed += 0.25f;
-                    if (speed > 3)
-                        speed = 0.5f;
-                    mPlayerConfig.put("sp", speed);
-                    updatePlayerCfgView();
-                    listener.updatePlayerCfg();
-                    speed_old = speed;
-                    mControlWrapper.setSpeed(speed);
-                } catch (JSONException e) {
-                    e.printStackTrace();
-                }
+                showSpeedDialog();
             }
         });
 
-        mPlayerSpeedBtn.setOnLongClickListener(new OnLongClickListener() {
+        setOnTvLongClickListener(mPlayerSpeedBtn, new OnLongClickListener() {
             @Override
             public boolean onLongClick(View view) {
+                myHandle.removeCallbacks(myRunnable);
+                myHandle.postDelayed(myRunnable, myHandleSeconds);
+                FastClickCheckUtil.check(view);
                 try {
                     mPlayerConfig.put("sp", 1.0f);
                     updatePlayerCfgView();
@@ -596,7 +693,7 @@ public class VodController extends BaseController {
             }
         });
 
-        mPlayerBtn.setOnLongClickListener(new OnLongClickListener() {
+        setOnTvLongClickListener(mPlayerBtn, new OnLongClickListener() {
             @Override
             public boolean onLongClick(View view) {
                 myHandle.removeCallbacks(myRunnable);
@@ -718,7 +815,7 @@ public class VodController extends BaseController {
                 }
             }
         });
-        mPlayerTimeStartBtn.setOnLongClickListener(new OnLongClickListener() {
+        setOnTvLongClickListener(mPlayerTimeStartBtn, new OnLongClickListener() {
             @Override
             public boolean onLongClick(View view) {
                 try {
@@ -748,7 +845,7 @@ public class VodController extends BaseController {
                 }
             }
         });
-        mPlayerTimeSkipBtn.setOnLongClickListener(new OnLongClickListener() {
+        setOnTvLongClickListener(mPlayerTimeSkipBtn, new OnLongClickListener() {
             @Override
             public boolean onLongClick(View view) {
                 try {
@@ -769,13 +866,17 @@ public class VodController extends BaseController {
                 hideBottom();
             }
         });
-        mZimuBtn.setOnLongClickListener(new OnLongClickListener() {
+        setOnTvLongClickListener(mZimuBtn, new OnLongClickListener() {
             @Override
             public boolean onLongClick(View view) {
                 mSubtitleView.setVisibility(View.GONE);
                 mSubtitleView.destroy();
                 mSubtitleView.clearSubtitleCache();
                 mSubtitleView.isInternal = false;
+                mLyricView.setVisibility(View.GONE);
+                mLyricView.destroy();
+                mLyricView.clearSubtitleCache();
+                mExoSubtitleView.setVisibility(View.GONE);
                 hideBottom();
                 Toast.makeText(getContext(), "字幕已关闭", Toast.LENGTH_SHORT).show();
                 return true;
@@ -789,11 +890,29 @@ public class VodController extends BaseController {
                 hideBottom();
             }
         });
+        mVideoTrackBtn.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                FastClickCheckUtil.check(view);
+                listener.selectVideoTrack();
+                hideBottom();
+            }
+        });
         mDanmuSettingBtn.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View view) {
                 FastClickCheckUtil.check(view);
                 listener.showDanmuSetting();
+            }
+        });
+        setOnTvLongClickListener(mDanmuSettingBtn, new OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View view) {
+                FastClickCheckUtil.check(view);
+                boolean opened = listener.toggleDanmu();
+                hideBottom();
+                Toast.makeText(getContext(), opened ? "弹幕已开启" : "弹幕已临时关闭", Toast.LENGTH_SHORT).show();
+                return true;
             }
         });
         mDanmuSearchUiBtn.setOnClickListener(new OnClickListener() {
@@ -803,7 +922,7 @@ public class VodController extends BaseController {
                 hideBottom();
             }
         });
-        mDanmuSearchUiBtn.setOnLongClickListener(new OnLongClickListener() {
+        setOnTvLongClickListener(mDanmuSearchUiBtn, new OnLongClickListener() {
             @Override
             public boolean onLongClick(View view) {
                 listener.searchDanmuUi(true);
@@ -821,6 +940,8 @@ public class VodController extends BaseController {
         });
         //屏显
         int disPlay = Hawk.get(HawkConfig.SCREEN_DISPLAY, GONE);
+        mTopRoot2.setVisibility(disPlay);
+        tv_screen_display.setVisibility(disPlay);
         seekTime.setVisibility(disPlay);
         net_play_speed.setVisibility(disPlay);
         mPlayPauseTime.setVisibility(disPlay);
@@ -829,6 +950,7 @@ public class VodController extends BaseController {
             @Override
             public void onClick(View view) {
                 int disPlay =(Hawk.get(HawkConfig.SCREEN_DISPLAY, GONE) == VISIBLE) ? GONE : VISIBLE;
+                tv_screen_display.setVisibility(disPlay);
                 seekTime.setVisibility(disPlay);
                 net_play_speed.setVisibility(disPlay);
                 if(disPlay==VISIBLE)mPlayPauseTime.setVisibility(disPlay);
@@ -837,8 +959,106 @@ public class VodController extends BaseController {
                 hideBottom();
             }
         });
-        mNextBtn.setNextFocusLeftId(R.id.screen_display);
+        mCastBtn.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (listener != null) listener.clickCast();
+            }
+        });
+        if (Build.VERSION.SDK_INT < 30) {
+            mCastBtn.setVisibility(GONE);
+        } else {
+            mCastBtn.setVisibility(VISIBLE);
+        }
         mScreenDisplay.setNextFocusRightId(R.id.play_next);
+        mNextBtn.setNextFocusLeftId(R.id.screen_display);
+    }
+
+    private void showScaleDialog() {
+        try {
+            int scaleType = mPlayerConfig.getInt("sc");
+            ArrayList<Integer> scales = new ArrayList<>();
+            for (int i = 0; i <= 5; i++) scales.add(i);
+            SelectDialog<Integer> dialog = new SelectDialog<>(mActivity);
+            dialog.setTip("请选择画面尺寸");
+            dialog.setAdapter(new SelectDialogAdapter.SelectDialogInterface<Integer>() {
+                @Override
+                public void click(Integer value, int pos) {
+                    try {
+                        dialog.cancel();
+                        mPlayerConfig.put("sc", value);
+                        updatePlayerCfgView();
+                        listener.updatePlayerCfg();
+                        mControlWrapper.setScreenScaleType(value);
+                    } catch (JSONException e) {
+                        e.printStackTrace();
+                    }
+                }
+
+                @Override
+                public String getDisplay(Integer value) {
+                    return PlayerHelper.getScaleName(value);
+                }
+            }, new DiffUtil.ItemCallback<Integer>() {
+                @Override
+                public boolean areItemsTheSame(@NonNull @NotNull Integer oldItem, @NonNull @NotNull Integer newItem) {
+                    return oldItem.intValue() == newItem.intValue();
+                }
+
+                @Override
+                public boolean areContentsTheSame(@NonNull @NotNull Integer oldItem, @NonNull @NotNull Integer newItem) {
+                    return oldItem.intValue() == newItem.intValue();
+                }
+            }, scales, scaleType);
+            dialog.show();
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void showSpeedDialog() {
+        try {
+            float speed = (float) mPlayerConfig.getDouble("sp");
+            ArrayList<Float> speeds = new ArrayList<>();
+            float[] speedOptions = {0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 3.0f};
+            for (float value : speedOptions) speeds.add(value);
+            int defaultPos = speeds.indexOf(speed);
+            SelectDialog<Float> dialog = new SelectDialog<>(mActivity);
+            dialog.setTip("请选择播放倍速");
+            dialog.setAdapter(new SelectDialogAdapter.SelectDialogInterface<Float>() {
+                @Override
+                public void click(Float value, int pos) {
+                    try {
+                        dialog.cancel();
+                        mPlayerConfig.put("sp", value);
+                        updatePlayerCfgView();
+                        listener.updatePlayerCfg();
+                        speed_old = value;
+                        mControlWrapper.setSpeed(value);
+                    } catch (JSONException e) {
+                        e.printStackTrace();
+                    }
+                }
+
+                @Override
+                public String getDisplay(Float value) {
+                    return value + "x";
+                }
+            }, new DiffUtil.ItemCallback<Float>() {
+                @Override
+                public boolean areItemsTheSame(@NonNull @NotNull Float oldItem, @NonNull @NotNull Float newItem) {
+                    return oldItem.equals(newItem);
+                }
+
+                @Override
+                public boolean areContentsTheSame(@NonNull @NotNull Float oldItem, @NonNull @NotNull Float newItem) {
+                    return oldItem.equals(newItem);
+                }
+            }, speeds, defaultPos < 0 ? 1 : defaultPos);
+            dialog.show();
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
     }
 
     private void hideLiveAboutBtn() {
@@ -850,7 +1070,7 @@ public class VodController extends BaseController {
             mPlayerTimeResetBtn.setVisibility(GONE);
         } else {
             mPlayerSpeedBtn.setVisibility(View.VISIBLE);
-            mPlayerTimeStartEndText.setVisibility(View.VISIBLE);
+            mPlayerTimeStartEndText.setVisibility(GONE);
             mPlayerTimeStartBtn.setVisibility(View.VISIBLE);
             mPlayerTimeSkipBtn.setVisibility(View.VISIBLE);
             mPlayerTimeResetBtn.setVisibility(View.VISIBLE);
@@ -858,26 +1078,80 @@ public class VodController extends BaseController {
     }
 
     public void initLandscapePortraitBtnInfo() {
-        if(mControlWrapper!=null && mActivity!=null){
-            int width = mControlWrapper.getVideoSize()[0];
-            int height = mControlWrapper.getVideoSize()[1];
-            double screenSqrt = ScreenUtils.getSqrt(mActivity);
-            if (screenSqrt < 10.0 && width <= height) {
-                mLandscapePortraitBtn.setVisibility(View.VISIBLE);
-                mLandscapePortraitBtn.setText("竖屏");
-            }
+        boolean isPortrait = getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT;
+        if (mCurrentTime != null) mCurrentTime.setVisibility(isPortrait ? GONE : VISIBLE);
+        if (mTotalTime != null) mTotalTime.setVisibility(isPortrait ? GONE : VISIBLE);
+        if (isPortrait) {
+            if (backBtn != null) backBtn.setVisibility(INVISIBLE);
+            if (mLockView != null) mLockView.setVisibility(INVISIBLE);
         }
+        updatePortraitMenu(isPortrait);
+
+        if (mLandscapePortraitBtn == null) return;
+        boolean showButton = false;
+        if (mControlWrapper != null && mActivity != null && !ScreenUtils.isTv(mActivity)) {
+            int[] videoSize = mControlWrapper.getVideoSize();
+            int width = videoSize[0];
+            int height = videoSize[1];
+            long duration = safeTimeMs(mControlWrapper.getDuration());
+            boolean shortVideo = duration > 0 && duration < 12 * 60 * 1000L;
+            showButton = width > 0 && height > 0 && (width <= height || shortVideo) && ScreenUtils.getSqrt(mActivity) < 10.0;
+        }
+        mLandscapePortraitBtn.setVisibility(showButton ? VISIBLE : GONE);
+        if (showButton) mLandscapePortraitBtn.setText(isPortrait ? "横屏" : "竖屏");
+    }
+
+    private void updatePortraitMenu(boolean isPortrait) {
+        if (isPortrait) {
+            mParseRoot.setVisibility(GONE);
+            mPlayLabel.setVisibility(GONE);
+            mPlayrefresh.setVisibility(GONE);
+            mPlayerScaleBtn.setVisibility(GONE);
+            mPlayerIJKBtn.setVisibility(GONE);
+            mPlayerTimeStartEndText.setVisibility(GONE);
+            mPlayerTimeStartBtn.setVisibility(GONE);
+            mPlayerTimeSkipBtn.setVisibility(GONE);
+            mPlayerTimeResetBtn.setVisibility(GONE);
+            mCastBtn.setVisibility(GONE);
+            mZimuBtn.setVisibility(GONE);
+            mAudioTrackBtn.setVisibility(GONE);
+            mVideoTrackBtn.setVisibility(GONE);
+            mDanmuSettingBtn.setVisibility(GONE);
+            mDanmuSearchUiBtn.setVisibility(GONE);
+            mScreenDisplay.setVisibility(GONE);
+            return;
+        }
+
+        mParseRoot.setVisibility(showParse ? VISIBLE : GONE);
+        mPlayrefresh.setVisibility(VISIBLE);
+        mPlayerScaleBtn.setVisibility(VISIBLE);
+        mPlayerTimeStartEndText.setVisibility(GONE);
+        mPlayerTimeStartBtn.setVisibility(VISIBLE);
+        mPlayerTimeSkipBtn.setVisibility(VISIBLE);
+        mPlayerTimeResetBtn.setVisibility(VISIBLE);
+        mZimuBtn.setVisibility(VISIBLE);
+        mScreenDisplay.setVisibility(VISIBLE);
+        mCastBtn.setVisibility(Build.VERSION.SDK_INT < 30 ? GONE : VISIBLE);
+        if (mPlayerConfig != null) updatePlayerCfgView();
+        updateDanmuBtn();
+        updateDanmuSearchUiBtn();
     }
 
     void setLandscapePortrait() {
-        int requestedOrientation = mActivity.getRequestedOrientation();
-        if (requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE || requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE || requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE) {
-            mLandscapePortraitBtn.setText("横屏");
-            mActivity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
-        } else if (requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT || requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT || requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT) {
+        if (mActivity == null) return;
+        if (mActivity.getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT) {
             mLandscapePortraitBtn.setText("竖屏");
             mActivity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+        } else {
+            mLandscapePortraitBtn.setText("横屏");
+            mActivity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
         }
+    }
+
+    @Override
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+        initLandscapePortraitBtnInfo();
     }
 
     void initSubtitleInfo() {
@@ -891,7 +1165,9 @@ public class VodController extends BaseController {
     }
 
     public void showParse(boolean userJxList) {
-        mParseRoot.setVisibility(userJxList ? VISIBLE : GONE);
+        showParse = userJxList;
+        boolean isPortrait = getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT;
+        mParseRoot.setVisibility(showParse && !isPortrait ? VISIBLE : GONE);
     }
 
     private JSONObject mPlayerConfig = null;
@@ -909,10 +1185,13 @@ public class VodController extends BaseController {
             mPlayerIJKBtn.setText(getCodecShortName(mPlayerConfig.getString("ijk")));
             mPlayerIJKBtn.setVisibility(playerType == 1 ? VISIBLE : GONE);
             mPlayerScaleBtn.setText(PlayerHelper.getScaleName(mPlayerConfig.getInt("sc")));
-            mPlayerSpeedBtn.setText("x" + mPlayerConfig.getDouble("sp"));
-            mPlayerTimeStartBtn.setText(stringForTime(mPlayerConfig.getInt("st") * 1000));
-            mPlayerTimeSkipBtn.setText(stringForTime(mPlayerConfig.getInt("et") * 1000));
+            mPlayerSpeedBtn.setText(mPlayerConfig.getDouble("sp") + "x");
+            int start = mPlayerConfig.getInt("st");
+            int end = mPlayerConfig.getInt("et");
+            mPlayerTimeStartBtn.setText(start == 0 ? "片头" : stringForTime(start * 1000));
+            mPlayerTimeSkipBtn.setText(end == 0 ? "片尾" : stringForTime(end * 1000));
             mAudioTrackBtn.setVisibility((playerType == 1 || playerType == 2) ? VISIBLE : GONE);
+            mVideoTrackBtn.setVisibility((playerType == 1 || playerType == 2) ? VISIBLE : GONE);
         } catch (JSONException e) {
             e.printStackTrace();
         }
@@ -955,18 +1234,42 @@ public class VodController extends BaseController {
 
     public void updateDanmuBtn() {
         if (mDanmuSettingBtn == null) return;
-        mDanmuSettingBtn.setVisibility(hasDanmu ? VISIBLE : GONE);
+        mDanmuSettingBtn.setVisibility(DanmuHelper.isOpen() ? VISIBLE : GONE);
+        updatePlayLabelVisibility();
     }
 
     public void updateDanmuSearchUiBtn() {
         if (mDanmuSearchUiBtn == null) return;
-        mDanmuSearchUiBtn.setVisibility(ApiConfig.get().hasDanmuSearchUi() ? VISIBLE : GONE);
+        boolean hasDanmuSearchUi = ApiConfig.get().hasDanmuSearchUi();
+        mDanmuSearchUiBtn.setVisibility(hasDanmuSearchUi ? VISIBLE : GONE);
+        updatePlayLabelVisibility();
+    }
+
+    private void updatePlayLabelVisibility() {
+        if (mPlayLabel == null || mPlayBtnGroup == null) return;
+        boolean isDanmuMenuVisible = false;
+        boolean isScreenDisplayNext = false;
+        for (int i = 0; i < mPlayBtnGroup.getChildCount(); i++) {
+            View child = mPlayBtnGroup.getChildAt(i);
+            if (child.getVisibility() != VISIBLE) continue;
+            if (child == mDanmuSettingBtn) {
+                isDanmuMenuVisible = true;
+                continue;
+            }
+            if (isDanmuMenuVisible) {
+                isScreenDisplayNext = child == mScreenDisplay;
+                break;
+            }
+        }
+        mPlayLabel.setVisibility(isDanmuMenuVisible && !isScreenDisplayNext ? GONE : VISIBLE);
     }
 
     public interface VodControlListener {
         void playNext(boolean rmProgress);
 
         void playPre();
+
+        void showEpisodeDialog();
 
         void prepared();
 
@@ -982,11 +1285,19 @@ public class VodController extends BaseController {
 
         void selectAudioTrack();
 
+        void selectVideoTrack();
+
         void showDanmuSetting();
+
+        boolean toggleDanmu();
 
         void searchDanmuUi(boolean longClick);
 
         void startPlayUrl(String url, HashMap<String, String> headers);
+
+        void onM3u8ProxyUrl(String proxyUrl, String sourceUrl);
+
+        void clickCast();
 
         void setAllowSwitchPlayer(boolean isAllow);
     }
@@ -1101,7 +1412,7 @@ public class VodController extends BaseController {
         }
         mCurrentTime.setText(stringForTime(position));
         mTotalTime.setText(stringForTime(duration));
-        seekTime.setText((seconds2Time(position)) + " | " + (seconds2Time(duration))); //右上角进度条时间显示
+        seekTime.setText(formatSeekTime(position) + " | " + formatSeekTime(duration)); //右上角进度条时间显示
         if (duration > 0) {
             mSeekBar.setEnabled(true);
             int pos = (int) (position * 1.0 / duration * mSeekBar.getMax());
@@ -1115,6 +1426,16 @@ public class VodController extends BaseController {
         } else {
             mSeekBar.setSecondaryProgress(percent * 10);
         }
+    }
+
+    private static String formatSeekTime(int timeMs) {
+        int totalSeconds = Math.max(0, timeMs) / 1000;
+        int seconds = totalSeconds % 60;
+        int minutes = (totalSeconds / 60) % 60;
+        int hours = totalSeconds / 3600;
+        return hours > 0
+                ? String.format(Locale.getDefault(), "%d:%02d:%02d", hours, minutes, seconds)
+                : String.format(Locale.getDefault(), "%02d:%02d", minutes, seconds);
     }
 
     private boolean simSlideStart = false;
@@ -1165,9 +1486,9 @@ public class VodController extends BaseController {
     protected void updateSeekUI(int curr, int seekTo, int duration) {
         super.updateSeekUI(curr, seekTo, duration);
         if (seekTo > curr) {
-            mProgressIcon.setImageResource(R.drawable.icon_pre);
+            mProgressIcon.setImageResource(R.drawable.exo_icon_fastforward);
         } else {
-            mProgressIcon.setImageResource(R.drawable.icon_back);
+            mProgressIcon.setImageResource(R.drawable.exo_icon_rewind);
         }
         mProgressText.setText(stringForTime(seekTo) + " / " + stringForTime(duration));
         mHandler.sendEmptyMessage(1000);
@@ -1190,6 +1511,10 @@ public class VodController extends BaseController {
                 mTopRoot1.setVisibility(GONE);
 //                mTopRoot2.setVisibility(GONE);
                 mPlayLoadNetSpeedRightTop.setVisibility(GONE);
+                if (isBottomVisible()) {
+                    hideBottom();
+                }
+                showPauseRoot();
                 mPlayTitle.setVisibility(VISIBLE);
                 break;
             case VideoView.STATE_ERROR:
@@ -1201,11 +1526,9 @@ public class VodController extends BaseController {
                 listener.prepared();
                 break;
             case VideoView.STATE_BUFFERED:
-                mPlayLoadNetSpeed.setVisibility(GONE);
-                break;
             case VideoView.STATE_PREPARING:
             case VideoView.STATE_BUFFERING:
-                if(mProgressRoot.getVisibility()==GONE)mPlayLoadNetSpeed.setVisibility(VISIBLE);
+                mPlayLoadNetSpeed.setVisibility(GONE);
                 break;
             case VideoView.STATE_PLAYBACK_COMPLETED:
                 listener.playNext(true);
@@ -1242,11 +1565,29 @@ public class VodController extends BaseController {
         }
         int keyCode = event.getKeyCode();
         int action = event.getAction();
+        if (action == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && keyCode == KeyEvent.KEYCODE_MENU) {
+            listener.showEpisodeDialog();
+            hideBottom();
+            return true;
+        }
         if (isBottomVisible()) {
             mHandler.removeMessages(1002);
             mHandler.removeMessages(1003);
             myHandle.postDelayed(myRunnable, myHandleSeconds);
             return super.dispatchKeyEvent(event);
+        }
+        if (action == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0
+                && videoPlayState == VideoView.STATE_ERROR
+                && (keyCode == KeyEvent.KEYCODE_DPAD_UP
+                || keyCode == KeyEvent.KEYCODE_DPAD_DOWN
+                || keyCode == KeyEvent.KEYCODE_DPAD_LEFT
+                || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
+                || keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+                || keyCode == KeyEvent.KEYCODE_ENTER
+                || keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)) {
+            showBottom();
+            myHandle.postDelayed(myRunnable, myHandleSeconds);
+            return true;
         }
         boolean isInPlayback = isInPlaybackState();
         if (action == KeyEvent.ACTION_DOWN) {
@@ -1257,10 +1598,10 @@ public class VodController extends BaseController {
                 }
             } else if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
                 if (isInPlayback) {
-                    togglePlay();
+                    if (event.getRepeatCount() == 0) togglePlay();
                     return true;
                 }
-            } else if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN || keyCode== KeyEvent.KEYCODE_MENU) {
+            } else if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
                 if (!isBottomVisible()) {
                     showBottom();
                     myHandle.postDelayed(myRunnable, myHandleSeconds);
@@ -1327,10 +1668,60 @@ public class VodController extends BaseController {
         return super.onTouchEvent(e);
     }
 
+    /**
+     * 为播放菜单按钮补充遥控器确认键的长按处理。
+     * 部分电视盒子不会把确认键长按分发为 View.OnLongClickListener。
+     */
+    private void setOnTvLongClickListener(final View view, final OnLongClickListener listener) {
+        view.setOnLongClickListener(listener);
+        view.setOnKeyListener(new OnKeyListener() {
+            private boolean longPressTriggered;
+            private final Runnable longPressRunnable = new Runnable() {
+                @Override
+                public void run() {
+                    if (view.hasFocus() && view.isShown()) {
+                        longPressTriggered = true;
+                        view.performLongClick();
+                    }
+                }
+            };
+
+            private boolean isConfirmKey(int keyCode) {
+                return keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+                        || keyCode == KeyEvent.KEYCODE_ENTER
+                        || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
+                        || keyCode == KeyEvent.KEYCODE_BUTTON_A;
+            }
+
+            @Override
+            public boolean onKey(View v, int keyCode, KeyEvent event) {
+                if (!isConfirmKey(keyCode)) {
+                    return false;
+                }
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    if (event.getRepeatCount() == 0) {
+                        longPressTriggered = false;
+                        view.removeCallbacks(longPressRunnable);
+                        view.postDelayed(longPressRunnable, ViewConfiguration.getLongPressTimeout());
+                    }
+                    return true;
+                }
+                if (event.getAction() == KeyEvent.ACTION_UP) {
+                    view.removeCallbacks(longPressRunnable);
+                    if (!longPressTriggered) {
+                        view.performClick();
+                    }
+                    return true;
+                }
+                return true;
+            }
+        });
+    }
+
 
     private final Handler mmHandler = new Handler();
     private Runnable mLongPressRunnable;
-    private static final long LONG_PRESS_DELAY = 800;
+    private static final long LONG_PRESS_DELAY = ViewConfiguration.getLongPressTimeout();
     private boolean isLongPressTriggered = false;
 
     private boolean setMinPlayTimeChange(String typeEt,boolean increase){
@@ -1577,7 +1968,9 @@ public class VodController extends BaseController {
             LOG.i("echo-m3u8内容解析：未检测到广告");
             listener.startPlayUrl(url, headers);
         } else {
-            listener.startPlayUrl(ControlManager.get().getAddress(true) + "proxyM3u8", headers);
+            String proxyUrl = ControlManager.get().getAddress(true) + "proxyM3u8";
+            listener.onM3u8ProxyUrl(proxyUrl, url);
+            listener.startPlayUrl(proxyUrl, headers);
             Toast.makeText(getContext(), "已移除视频广告 "+M3u8.currentAdCount+" 条", Toast.LENGTH_SHORT).show();
         }
     }
