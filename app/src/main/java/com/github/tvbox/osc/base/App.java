@@ -12,12 +12,11 @@ import com.github.tvbox.osc.util.AppManager;
 import com.github.tvbox.osc.util.EpgUtil;
 import com.github.tvbox.osc.util.FileUtils;
 import com.github.tvbox.osc.util.HawkConfig;
-import com.github.tvbox.osc.util.LOG;
+
 import com.github.tvbox.osc.util.OkGoHelper;
 import com.github.tvbox.osc.util.PlayerHelper;
 import com.kingja.loadsir.core.LoadSir;
 import com.orhanobut.hawk.Hawk;
-import com.p2p.P2PClass;
 import com.whl.quickjs.android.QuickJSLoader;
 import com.github.catvod.crawler.JsLoader;
 
@@ -32,8 +31,6 @@ import me.jessyan.autosize.unit.Subunits;
 public class App extends MultiDexApplication {
     private static App instance;
 
-    private static P2PClass p;
-    public static String burl;
     private static String dashData;
 
     @Override
@@ -90,18 +87,6 @@ public class App extends MultiDexApplication {
     }
     public VodInfo getVodInfo(){
         return this.vodInfo;
-    }
-
-    public static P2PClass getp2p() {
-        try {
-            if (p == null) {
-                p = new P2PClass(FileUtils.getExternalCachePath());
-            }
-            return p;
-        } catch (Exception e) {
-            LOG.e(e.toString());
-            return null;
-        }
     }
 
     public Activity getCurrentActivity() {

@@ -223,8 +223,6 @@
 }
 -keep class com.github.tvbox.osc.bean.ProxyRule { *; }
 -keep class com.github.tvbox.osc.util.net.** { *; }
-# 迅雷下载模块
--keep class com.xunlei.downloadlib.** {*;}
 # quickjs引擎
 #-keep class com.github.tvbox.quickjs.** {*;}
 -keep class com.whl.quickjs.** {*;}
